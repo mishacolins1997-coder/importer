@@ -157,6 +157,10 @@ async function getJson(it) {
 /* ----------------------------- импорт ----------------------------- */
 
 async function importCharacter(it) {
+    const ext = getExt(it.file.name);
+    if (!['png', 'json', 'yaml', 'yml', 'charx', 'byaf'].includes(ext)) {
+        throw new Error(`Формат .${ext} не подходит для персонажа (для .jsonl выберите тип «Чат»)`);
+    }
     const fd = new FormData();
     fd.append('avatar', it.file);
     fd.append('file_type', getExt(it.file.name));
@@ -210,7 +214,14 @@ async function importQuickReply(it) {
     return `Quick Reply: ${json.name} (после перезагрузки)`;
 }
 
+function requireImage(it) {
+    if (!(it.file.type || '').startsWith('image/') && !['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif'].includes(getExt(it.file.name))) {
+        throw new Error('Это не изображение');
+    }
+}
+
 async function importBackground(it) {
+    requireImage(it);
     const fd = new FormData();
     fd.append('avatar', it.file);
     await postForm('/api/backgrounds/upload', fd);
@@ -218,6 +229,7 @@ async function importBackground(it) {
 }
 
 async function importAvatar(it) {
+    requireImage(it);
     const fd = new FormData();
     fd.append('avatar', it.file);
     await postForm('/api/avatars/upload', fd);
@@ -489,13 +501,24 @@ function buildModal() {
     }));
 
     const drop = q('#sti_drop');
-    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
-    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-    drop.addEventListener('drop', async (e) => {
+    // SillyTavern сам ловит drag&drop на всей странице (импорт персонажей/аватаров).
+    // Перехватываем события в capture-фазе на window и не пускаем их дальше, пока открыто наше окно.
+    const dndGuard = async (e) => {
+        if (el.style.display === 'none' || !el.contains(e.target)) return;
         e.preventDefault();
-        drop.classList.remove('over');
-        await addFiles(await filesFromDrop(e.dataTransfer));
-    });
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (e.type === 'dragenter' || e.type === 'dragover') {
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+            drop.classList.add('over');
+        } else if (e.type === 'dragleave') {
+            drop.classList.remove('over');
+        } else if (e.type === 'drop') {
+            drop.classList.remove('over');
+            await addFiles(await filesFromDrop(e.dataTransfer));
+        }
+    };
+    for (const t of ['dragenter', 'dragover', 'dragleave', 'drop']) window.addEventListener(t, dndGuard, true);
     q('#sti_pick_files').addEventListener('click', () => q('#sti_input_files').click());
     q('#sti_pick_dir').addEventListener('click', () => q('#sti_input_dir').click());
     for (const id of ['#sti_input_files', '#sti_input_dir']) {
